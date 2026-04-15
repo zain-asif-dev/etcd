@@ -15,6 +15,7 @@
 package mvcc
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -85,6 +86,10 @@ func New(lg *zap.Logger, b backend.Backend, le lease.Lessor, cfg StoreConfig) Wa
 	s.wg.Add(2)
 	go s.syncWatchersLoop()
 	go s.syncVictimsLoop()
+	if cfg.WatchVictimEvictionInterval > 0 {
+		s.wg.Add(1)
+		go s.victimEvictionLoop()
+	}
 	return s
 }
 
@@ -173,6 +178,9 @@ func (s *watchableStore) cancelWatcher(wa *watcher) {
 		} else if wa.compacted {
 			watcherGauge.Dec()
 			break
+		} else if wa.evicted {
+			watcherGauge.Dec()
+			break
 		}
 
 		if !wa.victim {
@@ -190,6 +198,7 @@ func (s *watchableStore) cancelWatcher(wa *watcher) {
 		if victimBatch != nil {
 			slowWatcherGauge.Dec()
 			watcherGauge.Dec()
+			victimWatcherGauge.Dec()
 			delete(victimBatch, wa)
 			break
 		}
@@ -314,6 +323,11 @@ func (s *watchableStore) moveVictims() (moved int) {
 				continue
 			}
 			w.victim = false
+			if !w.victimSince.IsZero() {
+				victimWatcherAgeSec.Observe(time.Since(w.victimSince).Seconds())
+				w.victimSince = time.Time{}
+			}
+			victimWatcherGauge.Dec()
 			if eb.moreRev != 0 {
 				w.minRev = eb.moreRev
 			}
@@ -388,6 +402,9 @@ func (s *watchableStore) syncWatchers() int {
 			pendingEventsGauge.Add(float64(len(eb.evs)))
 		} else {
 			w.victim = true
+			if w.victimSince.IsZero() {
+				w.victimSince = time.Now()
+			}
 		}
 
 		if w.victim {
@@ -478,6 +495,9 @@ func (s *watchableStore) notify(rev int64, evs []mvccpb.Event) {
 		} else {
 			// move slow watcher to victims
 			w.victim = true
+			if w.victimSince.IsZero() {
+				w.victimSince = time.Now()
+			}
 			victim[w] = eb
 			s.synced.delete(w)
 			slowWatcherGauge.Inc()
@@ -495,10 +515,135 @@ func (s *watchableStore) addVictim(victim watcherBatch) {
 		return
 	}
 	s.victims = append(s.victims, victim)
+	victimWatcherGauge.Add(float64(len(victim)))
 	select {
 	case s.victimc <- struct{}{}:
 	default:
 	}
+}
+
+// victimEvictionLoop periodically force-cancels victim watchers that have
+// been blocked for too long or when the total victim count exceeds the
+// configured limit. This protects the server from unbounded memory growth
+// caused by slow watch clients.
+func (s *watchableStore) victimEvictionLoop() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(s.store.cfg.WatchVictimEvictionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.evictVictims(time.Now())
+		case <-s.stopc:
+			return
+		}
+	}
+}
+
+// evictVictims removes victim watchers that have exceeded WatchVictimMaxAge,
+// and additionally evicts the oldest victims (FIFO) when the total victim
+// count exceeds WatchVictimMaxCount. Evicted watchers receive a cancellation
+// WatchResponse with Evicted=true so the client can reconnect.
+//
+// Returns the number of watchers evicted.
+func (s *watchableStore) evictVictims(now time.Time) int {
+	maxAge := s.store.cfg.WatchVictimMaxAge
+	maxCount := s.store.cfg.WatchVictimMaxCount
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type victimRef struct {
+		w     *watcher
+		batch watcherBatch
+	}
+	var all []victimRef
+	for _, wb := range s.victims {
+		for w := range wb {
+			all = append(all, victimRef{w: w, batch: wb})
+		}
+	}
+	if len(all) == 0 {
+		return 0
+	}
+
+	// Sort by victimSince ascending so the oldest victims are evicted first.
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].w.victimSince.Before(all[j].w.victimSince)
+	})
+
+	toEvict := make(map[*watcher]watcherBatch)
+	// Age-based eviction.
+	if maxAge > 0 {
+		for _, vr := range all {
+			if !vr.w.victimSince.IsZero() && now.Sub(vr.w.victimSince) >= maxAge {
+				toEvict[vr.w] = vr.batch
+			}
+		}
+	}
+	// Count-based eviction (FIFO on remaining victims).
+	if maxCount > 0 {
+		remaining := len(all) - len(toEvict)
+		excess := remaining - maxCount
+		for i := 0; i < len(all) && excess > 0; i++ {
+			w := all[i].w
+			if _, ok := toEvict[w]; ok {
+				continue
+			}
+			toEvict[w] = all[i].batch
+			excess--
+		}
+	}
+
+	if len(toEvict) == 0 {
+		return 0
+	}
+
+	s.store.revMu.RLock()
+	rev := s.store.currentRev
+	s.store.revMu.RUnlock()
+	for w, wb := range toEvict {
+		age := time.Duration(0)
+		if !w.victimSince.IsZero() {
+			age = now.Sub(w.victimSince)
+			victimWatcherAgeSec.Observe(age.Seconds())
+		}
+		// Best-effort notification to the client. The channel may still be
+		// full (which is why this watcher is a victim); in that case the
+		// client will discover the cancellation on its next interaction.
+		select {
+		case w.ch <- WatchResponse{WatchID: w.id, Revision: rev, Evicted: true}:
+		default:
+		}
+		w.evicted = true
+		w.victim = false
+		w.victimSince = time.Time{}
+		delete(wb, w)
+
+		slowWatcherGauge.Dec()
+		victimWatcherGauge.Dec()
+		victimWatcherEvictionsCounter.Inc()
+
+		s.store.lg.Warn(
+			"evicted slow victim watcher",
+			zap.Int64("watch-id", int64(w.id)),
+			zap.ByteString("key", w.key),
+			zap.Duration("victim-age", age),
+		)
+	}
+
+	// Drop any now-empty victim batches.
+	var nv []watcherBatch
+	for _, wb := range s.victims {
+		if len(wb) > 0 {
+			nv = append(nv, wb)
+		}
+	}
+	s.victims = nv
+
+	return len(toEvict)
 }
 
 func (s *watchableStore) rev() int64 { return s.store.Rev() }
@@ -548,8 +693,16 @@ type watcher struct {
 	// victim is set when ch is blocked and undergoing victim processing
 	victim bool
 
+	// victimSince records when the watcher entered victim state. It is the
+	// zero value when the watcher is not currently a victim.
+	victimSince time.Time
+
 	// compacted is set when the watcher is removed because of compaction
 	compacted bool
+
+	// evicted is set when the watcher is removed by the victim eviction loop
+	// because it stayed blocked for too long or because of victim count limits.
+	evicted bool
 
 	// restore is true when the watcher is being restored from leader snapshot
 	// which means that this watcher has just been moved from "synced" to "unsynced"

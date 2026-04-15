@@ -171,6 +171,9 @@ type ServerConfig struct {
 	TracerOptions []otelgrpc.Option
 
 	WatchProgressNotifyInterval time.Duration
+	WatchVictimMaxCount         int
+	WatchVictimEvictionInterval time.Duration
+	WatchVictimMaxAge           time.Duration
 
 	// UnsafeNoFsync disables all uses of fsync.
 	// Setting this is unsafe and will cause data loss.

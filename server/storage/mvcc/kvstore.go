@@ -47,6 +47,17 @@ var (
 type StoreConfig struct {
 	CompactionBatchLimit    int
 	CompactionSleepInterval time.Duration
+
+	// WatchVictimMaxCount is the maximum number of watchers allowed to remain
+	// in the victim state before the oldest victims are force-evicted.
+	// 0 means unlimited (no count-based eviction).
+	WatchVictimMaxCount int
+	// WatchVictimEvictionInterval is how often the victim eviction loop runs.
+	// 0 disables the eviction loop entirely.
+	WatchVictimEvictionInterval time.Duration
+	// WatchVictimMaxAge is the maximum time a watcher may remain in the victim
+	// state before being force-evicted. 0 means unlimited (no age-based eviction).
+	WatchVictimMaxAge time.Duration
 }
 
 type store struct {
