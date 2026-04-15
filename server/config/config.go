@@ -131,6 +131,26 @@ type ServerConfig struct {
 	// streams that each client can open at a time.
 	MaxConcurrentStreams uint32
 
+	// AdmissionControlEnabled enables the gRPC admission-control interceptor
+	// (per-endpoint rate limiting and priority-based load shedding).
+	AdmissionControlEnabled bool
+	// AdmissionControlDryRun makes the admission controller evaluate
+	// decisions but never reject; would-be rejections are recorded in the
+	// admission_dry_run_rejected_total metric instead.
+	AdmissionControlDryRun bool
+	// RateLimitReads is the maximum read requests per second admitted by the
+	// admission controller. 0 means unlimited.
+	RateLimitReads uint
+	// RateLimitWrites is the maximum write requests per second admitted by
+	// the admission controller. 0 means unlimited.
+	RateLimitWrites uint
+	// RateLimitBurstFactor is multiplied by the per-group rate limit to
+	// derive the token-bucket burst size.
+	RateLimitBurstFactor float64
+	// OverloadThreshold is the fraction of MaxConcurrentStreams at which the
+	// admission controller begins shedding lower-priority requests.
+	OverloadThreshold float64
+
 	WarningApplyDuration        time.Duration
 	WarningUnaryRequestDuration time.Duration
 

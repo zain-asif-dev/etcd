@@ -24,6 +24,7 @@ import (
 	cconfig "go.etcd.io/etcd/server/v3/config"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/rafthttp"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc/admission"
 	"go.etcd.io/etcd/server/v3/features"
 )
 
@@ -90,6 +91,18 @@ Member:
     Maximum client request size in bytes the server will accept.
   --max-concurrent-streams 'math.MaxUint32'
     Maximum concurrent streams that each client can open at a time.
+  --admission-control-enabled 'false'
+    Enable the gRPC admission-control interceptor (per-endpoint rate limiting and priority-based load shedding).
+  --admission-control-dry-run 'false'
+    Evaluate admission-control decisions but never reject; record would-be rejections in the admission_dry_run_rejected_total metric instead.
+  --rate-limit-reads '0'
+    Maximum read requests per second admitted by the admission controller. 0 means unlimited.
+  --rate-limit-writes '0'
+    Maximum write requests per second admitted by the admission controller. 0 means unlimited.
+  --rate-limit-burst-factor '` + fmt.Sprintf("%v", admission.DefaultBurstFactor) + `'
+    Multiplier applied to a rate limit to derive its token-bucket burst size. Must be >= 1.0.
+  --overload-threshold '` + fmt.Sprintf("%v", admission.DefaultOverloadThreshold) + `'
+    Fraction (0,1] of max-concurrent-streams at which lower-priority requests are shed.
   --grpc-keepalive-min-time '5s'
     Minimum duration interval that a client should wait before pinging server.
   --grpc-keepalive-interval '2h'

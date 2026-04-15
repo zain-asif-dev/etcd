@@ -30,6 +30,7 @@ import (
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/credentials"
 	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc/admission"
 )
 
 const (
@@ -62,6 +63,20 @@ func Server(s *etcdserver.EtcdServer, tls *tls.Config, interceptor grpc.UnarySer
 	chainStreamInterceptors := []grpc.StreamServerInterceptor{
 		serverMetrics.StreamServerInterceptor(),
 		newStreamInterceptor(s),
+	}
+
+	if s.Cfg.AdmissionControlEnabled {
+		ac := admission.NewController(s.Logger(), s, admission.Config{
+			Enabled:              true,
+			DryRun:               s.Cfg.AdmissionControlDryRun,
+			RateLimitReads:       s.Cfg.RateLimitReads,
+			RateLimitWrites:      s.Cfg.RateLimitWrites,
+			BurstFactor:          s.Cfg.RateLimitBurstFactor,
+			OverloadThreshold:    s.Cfg.OverloadThreshold,
+			MaxConcurrentStreams: s.Cfg.MaxConcurrentStreams,
+		})
+		chainUnaryInterceptors = append(chainUnaryInterceptors, ac.UnaryInterceptor())
+		chainStreamInterceptors = append(chainStreamInterceptors, ac.StreamInterceptor())
 	}
 
 	if s.Cfg.EnableDistributedTracing {
