@@ -66,6 +66,11 @@ const (
 	DefaultWarningUnaryRequestDuration = 300 * time.Millisecond
 	DefaultMaxRequestBytes             = 1.5 * 1024 * 1024
 	DefaultMaxConcurrentStreams        = math.MaxUint32
+	DefaultRateLimitRequestsPerSecond  = 1000
+	DefaultRateLimitBurstSize          = 100
+	DefaultRateLimitPerClientRPS       = 100
+	DefaultRateLimitMaxTrackedClients  = 10000
+	DefaultRateLimitReadWriteRatio     = 2.0
 	DefaultGRPCKeepAliveMinTime        = 5 * time.Second
 	DefaultGRPCKeepAliveInterval       = 2 * time.Hour
 	DefaultGRPCKeepAliveTimeout        = 20 * time.Second
@@ -228,6 +233,19 @@ type Config struct {
 	// MaxConcurrentStreams specifies the maximum number of concurrent
 	// streams that each client can open at a time.
 	MaxConcurrentStreams uint32 `json:"max-concurrent-streams"`
+
+	// RateLimitEnabled enables server-side request rate limiting on the gRPC API.
+	RateLimitEnabled bool `json:"rate-limit-enabled"`
+	// RateLimitRequestsPerSecond is the global token-bucket refill rate across all clients.
+	RateLimitRequestsPerSecond int `json:"rate-limit-requests-per-second"`
+	// RateLimitBurstSize is the global token-bucket capacity (maximum burst).
+	RateLimitBurstSize int `json:"rate-limit-burst-size"`
+	// RateLimitPerClientRPS is the per-client-IP token-bucket rate and capacity.
+	RateLimitPerClientRPS int `json:"rate-limit-per-client-rps"`
+	// RateLimitMaxTrackedClients bounds the number of client IPs tracked (LRU eviction).
+	RateLimitMaxTrackedClients int `json:"rate-limit-max-tracked-clients"`
+	// RateLimitReadWriteRatio allows reads N times the base rate of writes.
+	RateLimitReadWriteRatio float64 `json:"rate-limit-read-write-ratio"`
 
 	//revive:disable:var-naming
 	ListenPeerUrls, ListenClientUrls, ListenClientHttpUrls []url.URL
@@ -513,6 +531,13 @@ func NewConfig() *Config {
 		MaxConcurrentStreams: DefaultMaxConcurrentStreams,
 		WarningApplyDuration: DefaultWarningApplyDuration,
 
+		RateLimitEnabled:           false,
+		RateLimitRequestsPerSecond: DefaultRateLimitRequestsPerSecond,
+		RateLimitBurstSize:         DefaultRateLimitBurstSize,
+		RateLimitPerClientRPS:      DefaultRateLimitPerClientRPS,
+		RateLimitMaxTrackedClients: DefaultRateLimitMaxTrackedClients,
+		RateLimitReadWriteRatio:    DefaultRateLimitReadWriteRatio,
+
 		GRPCKeepAliveMinTime:  DefaultGRPCKeepAliveMinTime,
 		GRPCKeepAliveInterval: DefaultGRPCKeepAliveInterval,
 		GRPCKeepAliveTimeout:  DefaultGRPCKeepAliveTimeout,
@@ -634,6 +659,14 @@ func (cfg *Config) AddFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&cfg.SocketOpts.ReuseAddress, "socket-reuse-address", cfg.SocketOpts.ReuseAddress, "Enable to set socket option SO_REUSEADDR on listeners allowing binding to an address in `TIME_WAIT` state.")
 
 	fs.Var(flags.NewUint32Value(cfg.MaxConcurrentStreams), "max-concurrent-streams", "Maximum concurrent streams that each client can open at a time.")
+
+	// rate limiting
+	fs.BoolVar(&cfg.RateLimitEnabled, "rate-limit-enabled", cfg.RateLimitEnabled, "Enable server-side request rate limiting on the gRPC API.")
+	fs.IntVar(&cfg.RateLimitRequestsPerSecond, "rate-limit-requests-per-second", cfg.RateLimitRequestsPerSecond, "Global rate limit (requests per second) applied across all clients.")
+	fs.IntVar(&cfg.RateLimitBurstSize, "rate-limit-burst-size", cfg.RateLimitBurstSize, "Global rate-limit token-bucket burst capacity.")
+	fs.IntVar(&cfg.RateLimitPerClientRPS, "rate-limit-per-client-rps", cfg.RateLimitPerClientRPS, "Per-client-IP rate limit (requests per second).")
+	fs.IntVar(&cfg.RateLimitMaxTrackedClients, "rate-limit-max-tracked-clients", cfg.RateLimitMaxTrackedClients, "Maximum number of distinct client IPs tracked for per-client rate limiting (LRU eviction beyond this).")
+	fs.Float64Var(&cfg.RateLimitReadWriteRatio, "rate-limit-read-write-ratio", cfg.RateLimitReadWriteRatio, "Allow reads at N times the base rate of writes.")
 
 	// raft connection timeouts
 	fs.DurationVar(&rafthttp.ConnReadTimeout, "raft-read-timeout", rafthttp.DefaultConnReadTimeout, "Read timeout set on each rafthttp connection")
@@ -1029,6 +1062,24 @@ func (cfg *Config) Validate() error {
 
 	if cfg.CompactHashCheckTime <= 0 {
 		return fmt.Errorf("--compact-hash-check-time must be >0 (set to %v)", cfg.CompactHashCheckTime)
+	}
+
+	if cfg.RateLimitEnabled {
+		if cfg.RateLimitRequestsPerSecond <= 0 {
+			return fmt.Errorf("--rate-limit-requests-per-second must be >0 when rate limiting is enabled (set to %d)", cfg.RateLimitRequestsPerSecond)
+		}
+		if cfg.RateLimitBurstSize <= 0 {
+			return fmt.Errorf("--rate-limit-burst-size must be >0 when rate limiting is enabled (set to %d)", cfg.RateLimitBurstSize)
+		}
+		if cfg.RateLimitPerClientRPS <= 0 {
+			return fmt.Errorf("--rate-limit-per-client-rps must be >0 when rate limiting is enabled (set to %d)", cfg.RateLimitPerClientRPS)
+		}
+		if cfg.RateLimitMaxTrackedClients <= 0 {
+			return fmt.Errorf("--rate-limit-max-tracked-clients must be >0 when rate limiting is enabled (set to %d)", cfg.RateLimitMaxTrackedClients)
+		}
+		if cfg.RateLimitReadWriteRatio <= 0 {
+			return fmt.Errorf("--rate-limit-read-write-ratio must be >0 when rate limiting is enabled (set to %v)", cfg.RateLimitReadWriteRatio)
+		}
 	}
 
 	// If `--name` isn't configured, then multiple members may have the same "default" name.

@@ -30,6 +30,7 @@ import (
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/credentials"
 	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/ratelimit"
 )
 
 const (
@@ -53,16 +54,29 @@ func Server(s *etcdserver.EtcdServer, tls *tls.Config, interceptor grpc.UnarySer
 	chainUnaryInterceptors := []grpc.UnaryServerInterceptor{
 		newLogUnaryInterceptor(s),
 		serverMetrics.UnaryServerInterceptor(),
-		newUnaryInterceptor(s),
 	}
+	chainStreamInterceptors := []grpc.StreamServerInterceptor{
+		serverMetrics.StreamServerInterceptor(),
+	}
+
+	if s.Cfg.RateLimitEnabled {
+		rl := ratelimit.New(ratelimit.Config{
+			Enabled:           true,
+			RequestsPerSecond: s.Cfg.RateLimitRequestsPerSecond,
+			BurstSize:         s.Cfg.RateLimitBurstSize,
+			PerClientRPS:      s.Cfg.RateLimitPerClientRPS,
+			MaxTrackedClients: s.Cfg.RateLimitMaxTrackedClients,
+			ReadWriteRatio:    s.Cfg.RateLimitReadWriteRatio,
+		}, s.Logger())
+		chainUnaryInterceptors = append(chainUnaryInterceptors, rl.UnaryInterceptor())
+		chainStreamInterceptors = append(chainStreamInterceptors, rl.StreamInterceptor())
+	}
+
+	chainUnaryInterceptors = append(chainUnaryInterceptors, newUnaryInterceptor(s))
 	if interceptor != nil {
 		chainUnaryInterceptors = append(chainUnaryInterceptors, interceptor)
 	}
-
-	chainStreamInterceptors := []grpc.StreamServerInterceptor{
-		serverMetrics.StreamServerInterceptor(),
-		newStreamInterceptor(s),
-	}
+	chainStreamInterceptors = append(chainStreamInterceptors, newStreamInterceptor(s))
 
 	if s.Cfg.EnableDistributedTracing {
 		opts = append(opts, grpc.StatsHandler(otelgrpc.NewServerHandler(s.Cfg.TracerOptions...)))
