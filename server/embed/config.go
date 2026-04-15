@@ -74,6 +74,9 @@ const (
 	DefaultAutoCompactionRetention     = "0"
 	DefaultAuthToken                   = "simple"
 	DefaultCompactHashCheckTime        = time.Minute
+	DefaultWatchVictimMaxCount         = 0
+	DefaultWatchVictimEvictionInterval = time.Minute
+	DefaultWatchVictimMaxAge           = 5 * time.Minute
 	DefaultLoggingFormat               = "json"
 
 	DefaultDiscoveryDialTimeout       = 2 * time.Second
@@ -365,6 +368,15 @@ type Config struct {
 	CompactionSleepInterval time.Duration `json:"compaction-sleep-interval"`
 	// WatchProgressNotifyInterval is the time duration of periodic watch progress notifications.
 	WatchProgressNotifyInterval time.Duration `json:"watch-progress-notify-interval"`
+	// WatchVictimMaxCount is the maximum number of blocked ("victim") watchers
+	// allowed before the oldest victims are force-evicted. 0 means unlimited.
+	WatchVictimMaxCount int `json:"watch-victim-max-count"`
+	// WatchVictimEvictionInterval is how often the server checks for and evicts
+	// long-standing victim watchers. 0 disables the eviction loop entirely.
+	WatchVictimEvictionInterval time.Duration `json:"watch-victim-eviction-interval"`
+	// WatchVictimMaxAge is the maximum time a watcher may remain in victim
+	// state before being force-cancelled. 0 means unlimited.
+	WatchVictimMaxAge time.Duration `json:"watch-victim-max-age"`
 	// WarningApplyDuration is the time duration after which a warning is generated if applying request
 	WarningApplyDuration time.Duration `json:"warning-apply-duration"`
 	// BootstrapDefragThresholdMegabytes is the minimum number of megabytes needed to be freed for etcd server to
@@ -567,6 +579,10 @@ func NewConfig() *Config {
 
 		CompactHashCheckTime: DefaultCompactHashCheckTime,
 
+		WatchVictimMaxCount:         DefaultWatchVictimMaxCount,
+		WatchVictimEvictionInterval: DefaultWatchVictimEvictionInterval,
+		WatchVictimMaxAge:           DefaultWatchVictimMaxAge,
+
 		V2Deprecation: config.V2DeprDefault,
 
 		DiscoveryCfg: v3discovery.DiscoveryConfig{
@@ -747,6 +763,9 @@ func (cfg *Config) AddFlags(fs *flag.FlagSet) {
 	fs.IntVar(&cfg.CompactionBatchLimit, "compaction-batch-limit", cfg.CompactionBatchLimit, "Sets the maximum revisions deleted in each compaction batch.")
 	fs.DurationVar(&cfg.CompactionSleepInterval, "compaction-sleep-interval", cfg.CompactionSleepInterval, "Sets the sleep interval between each compaction batch.")
 	fs.DurationVar(&cfg.WatchProgressNotifyInterval, "watch-progress-notify-interval", cfg.WatchProgressNotifyInterval, "Duration of periodic watch progress notifications.")
+	fs.IntVar(&cfg.WatchVictimMaxCount, "watch-victim-max-count", cfg.WatchVictimMaxCount, "Maximum number of blocked victim watchers allowed before the oldest are force-evicted. 0 means unlimited.")
+	fs.DurationVar(&cfg.WatchVictimEvictionInterval, "watch-victim-eviction-interval", cfg.WatchVictimEvictionInterval, "How often to check for and evict long-standing victim watchers. 0 disables eviction.")
+	fs.DurationVar(&cfg.WatchVictimMaxAge, "watch-victim-max-age", cfg.WatchVictimMaxAge, "Maximum time a watcher may remain in victim state before being force-cancelled. 0 means unlimited.")
 	fs.DurationVar(&cfg.DowngradeCheckTime, "downgrade-check-time", cfg.DowngradeCheckTime, "Duration of time between two downgrade status checks.")
 	fs.DurationVar(&cfg.WarningApplyDuration, "warning-apply-duration", cfg.WarningApplyDuration, "Time duration after which a warning is generated if watch progress takes more time.")
 	fs.DurationVar(&cfg.WarningUnaryRequestDuration, "warning-unary-request-duration", cfg.WarningUnaryRequestDuration, "Time duration after which a warning is generated if a unary request takes more time.")
@@ -1041,6 +1060,16 @@ func (cfg *Config) Validate() error {
 			"it isn't recommended to use default name, please set a value for --name. "+
 				"Note that etcd might run into issue when multiple members have the same default name",
 			zap.String("name", cfg.Name))
+	}
+
+	if cfg.WatchVictimEvictionInterval <= 0 && (cfg.WatchVictimMaxAge > 0 || cfg.WatchVictimMaxCount > 0) {
+		cfg.logger.Warn(
+			"victim watcher eviction is disabled because --watch-victim-eviction-interval is 0; "+
+				"--watch-victim-max-age and --watch-victim-max-count will have no effect",
+			zap.Duration("watch-victim-eviction-interval", cfg.WatchVictimEvictionInterval),
+			zap.Duration("watch-victim-max-age", cfg.WatchVictimMaxAge),
+			zap.Int("watch-victim-max-count", cfg.WatchVictimMaxCount),
+		)
 	}
 
 	minVersion, err := tlsutil.GetTLSVersion(cfg.TlsMinVersion)

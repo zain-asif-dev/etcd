@@ -284,6 +284,37 @@ var (
 			Name:      "total_put_size_in_bytes",
 			Help:      "The total size of put kv pairs seen by this member.",
 		})
+
+	victimWatcherEvictionsCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "etcd_debugging",
+			Subsystem: "mvcc",
+			Name:      "victim_watcher_evictions_total",
+			Help:      "Total number of victim watchers evicted due to memory pressure.",
+		},
+	)
+
+	victimWatcherAgeSec = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "etcd_debugging",
+			Subsystem: "mvcc",
+			Name:      "victim_watcher_age_seconds",
+			Help:      "Bucketed histogram of how long watchers stayed in victim state before eviction or recovery.",
+
+			// lowest bucket start of upper bound 0.01 sec (10 ms) with factor 2
+			// highest bucket start of 0.01 sec * 2^16 == 655.36 sec
+			Buckets: prometheus.ExponentialBuckets(.01, 2, 17),
+		},
+	)
+
+	victimWatcherGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "etcd_debugging",
+			Subsystem: "mvcc",
+			Name:      "victim_watcher_count",
+			Help:      "Current number of victim watchers (watchers blocked on a full channel).",
+		},
+	)
 )
 
 func init() {
@@ -310,6 +341,9 @@ func init() {
 	prometheus.MustRegister(currentRev)
 	prometheus.MustRegister(compactRev)
 	prometheus.MustRegister(totalPutSizeGauge)
+	prometheus.MustRegister(victimWatcherEvictionsCounter)
+	prometheus.MustRegister(victimWatcherAgeSec)
+	prometheus.MustRegister(victimWatcherGauge)
 }
 
 // ReportEventReceived reports that an event is received.

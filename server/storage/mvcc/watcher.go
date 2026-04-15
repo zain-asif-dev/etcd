@@ -30,6 +30,7 @@ var (
 	ErrWatcherNotExist    = errors.New("mvcc: watcher does not exist")
 	ErrEmptyWatcherRange  = errors.New("mvcc: watcher range is empty")
 	ErrWatcherDuplicateID = errors.New("mvcc: duplicate watch ID provided on the WatchStream")
+	ErrSlowWatcherEvicted = errors.New("mvcc: slow watcher evicted due to memory pressure")
 )
 
 type WatchID int64
@@ -95,6 +96,11 @@ type WatchResponse struct {
 
 	// CompactRevision is set when the watcher is cancelled due to compaction.
 	CompactRevision int64
+
+	// Evicted is set when the watcher is force-cancelled by the server because
+	// it stayed in the victim (blocked-channel) state for too long, or because
+	// the total number of victim watchers exceeded the configured limit.
+	Evicted bool
 }
 
 // watchStream contains a collection of watchers that share

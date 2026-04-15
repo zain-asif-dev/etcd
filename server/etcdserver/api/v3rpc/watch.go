@@ -455,13 +455,18 @@ func (sws *serverWatchStream) sendLoop() {
 				}
 			}
 
-			canceled := wresp.CompactRevision != 0
+			canceled := wresp.CompactRevision != 0 || wresp.Evicted
 			wr := &pb.WatchResponse{
 				Header:          sws.newResponseHeader(wresp.Revision),
 				WatchId:         int64(wresp.WatchID),
 				Events:          events,
 				CompactRevision: wresp.CompactRevision,
 				Canceled:        canceled,
+			}
+			if wresp.Evicted {
+				// Distinguish slow-watcher eviction from compaction so the
+				// client knows it should re-establish the watch.
+				wr.CancelReason = mvcc.ErrSlowWatcherEvicted.Error()
 			}
 
 			// Progress notifications can have WatchID -1
