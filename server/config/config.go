@@ -131,6 +131,19 @@ type ServerConfig struct {
 	// streams that each client can open at a time.
 	MaxConcurrentStreams uint32
 
+	// RateLimitEnabled enables server-side request rate limiting on the gRPC API.
+	RateLimitEnabled bool
+	// RateLimitRequestsPerSecond is the global token-bucket refill rate.
+	RateLimitRequestsPerSecond int
+	// RateLimitBurstSize is the global token-bucket capacity.
+	RateLimitBurstSize int
+	// RateLimitPerClientRPS is the per-client-IP token-bucket rate and capacity.
+	RateLimitPerClientRPS int
+	// RateLimitMaxTrackedClients bounds the number of client IPs tracked.
+	RateLimitMaxTrackedClients int
+	// RateLimitReadWriteRatio allows reads N times the base rate of writes.
+	RateLimitReadWriteRatio float64
+
 	WarningApplyDuration        time.Duration
 	WarningUnaryRequestDuration time.Duration
 

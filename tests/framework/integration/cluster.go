@@ -147,6 +147,13 @@ type ClusterConfig struct {
 	MaxTxnOps       uint
 	MaxRequestBytes uint
 
+	RateLimitEnabled           bool
+	RateLimitRequestsPerSecond int
+	RateLimitBurstSize         int
+	RateLimitPerClientRPS      int
+	RateLimitMaxTrackedClients int
+	RateLimitReadWriteRatio    float64
+
 	SnapshotCount          uint64
 	SnapshotCatchUpEntries uint64
 
@@ -269,6 +276,12 @@ func (c *Cluster) MustNewMember(t testutil.TB) *Member {
 			BackendBatchInterval:        c.Cfg.BackendBatchInterval,
 			MaxTxnOps:                   c.Cfg.MaxTxnOps,
 			MaxRequestBytes:             c.Cfg.MaxRequestBytes,
+			RateLimitEnabled:            c.Cfg.RateLimitEnabled,
+			RateLimitRequestsPerSecond:  c.Cfg.RateLimitRequestsPerSecond,
+			RateLimitBurstSize:          c.Cfg.RateLimitBurstSize,
+			RateLimitPerClientRPS:       c.Cfg.RateLimitPerClientRPS,
+			RateLimitMaxTrackedClients:  c.Cfg.RateLimitMaxTrackedClients,
+			RateLimitReadWriteRatio:     c.Cfg.RateLimitReadWriteRatio,
 			SnapshotCount:               c.Cfg.SnapshotCount,
 			SnapshotCatchUpEntries:      c.Cfg.SnapshotCatchUpEntries,
 			GRPCKeepAliveMinTime:        c.Cfg.GRPCKeepAliveMinTime,
@@ -594,6 +607,12 @@ type MemberConfig struct {
 	BackendBatchInterval        time.Duration
 	MaxTxnOps                   uint
 	MaxRequestBytes             uint
+	RateLimitEnabled            bool
+	RateLimitRequestsPerSecond  int
+	RateLimitBurstSize          int
+	RateLimitPerClientRPS       int
+	RateLimitMaxTrackedClients  int
+	RateLimitReadWriteRatio     float64
 	SnapshotCount               uint64
 	SnapshotCatchUpEntries      uint64
 	GRPCKeepAliveMinTime        time.Duration
@@ -673,6 +692,27 @@ func MustNewMember(t testutil.TB, mcfg MemberConfig) *Member {
 	m.MaxRequestBytes = mcfg.MaxRequestBytes
 	if m.MaxRequestBytes == 0 {
 		m.MaxRequestBytes = embed.DefaultMaxRequestBytes
+	}
+	m.RateLimitEnabled = mcfg.RateLimitEnabled
+	m.RateLimitRequestsPerSecond = mcfg.RateLimitRequestsPerSecond
+	if m.RateLimitRequestsPerSecond == 0 {
+		m.RateLimitRequestsPerSecond = embed.DefaultRateLimitRequestsPerSecond
+	}
+	m.RateLimitBurstSize = mcfg.RateLimitBurstSize
+	if m.RateLimitBurstSize == 0 {
+		m.RateLimitBurstSize = embed.DefaultRateLimitBurstSize
+	}
+	m.RateLimitPerClientRPS = mcfg.RateLimitPerClientRPS
+	if m.RateLimitPerClientRPS == 0 {
+		m.RateLimitPerClientRPS = embed.DefaultRateLimitPerClientRPS
+	}
+	m.RateLimitMaxTrackedClients = mcfg.RateLimitMaxTrackedClients
+	if m.RateLimitMaxTrackedClients == 0 {
+		m.RateLimitMaxTrackedClients = embed.DefaultRateLimitMaxTrackedClients
+	}
+	m.RateLimitReadWriteRatio = mcfg.RateLimitReadWriteRatio
+	if m.RateLimitReadWriteRatio == 0 {
+		m.RateLimitReadWriteRatio = embed.DefaultRateLimitReadWriteRatio
 	}
 	m.SnapshotCount = etcdserver.DefaultSnapshotCount
 	if mcfg.SnapshotCount != 0 {

@@ -90,6 +90,18 @@ Member:
     Maximum client request size in bytes the server will accept.
   --max-concurrent-streams 'math.MaxUint32'
     Maximum concurrent streams that each client can open at a time.
+  --rate-limit-enabled 'false'
+    Enable server-side request rate limiting on the gRPC API.
+  --rate-limit-requests-per-second '1000'
+    Global rate limit (requests per second) applied across all clients.
+  --rate-limit-burst-size '100'
+    Global rate-limit token-bucket burst capacity.
+  --rate-limit-per-client-rps '100'
+    Per-client-IP rate limit (requests per second).
+  --rate-limit-max-tracked-clients '10000'
+    Maximum number of distinct client IPs tracked for per-client rate limiting.
+  --rate-limit-read-write-ratio '2.0'
+    Allow reads at N times the base rate of writes.
   --grpc-keepalive-min-time '5s'
     Minimum duration interval that a client should wait before pinging server.
   --grpc-keepalive-interval '2h'

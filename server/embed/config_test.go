@@ -944,3 +944,53 @@ func TestFastLeaseKeepAliveValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestRateLimitConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		mut     func(*Config)
+		wantErr string
+	}{
+		{"disabled-default", func(c *Config) {}, ""},
+		{"enabled-default", func(c *Config) { c.RateLimitEnabled = true }, ""},
+		{"enabled-zero-rps", func(c *Config) {
+			c.RateLimitEnabled = true
+			c.RateLimitRequestsPerSecond = 0
+		}, "--rate-limit-requests-per-second"},
+		{"enabled-zero-burst", func(c *Config) {
+			c.RateLimitEnabled = true
+			c.RateLimitBurstSize = 0
+		}, "--rate-limit-burst-size"},
+		{"enabled-zero-per-client", func(c *Config) {
+			c.RateLimitEnabled = true
+			c.RateLimitPerClientRPS = 0
+		}, "--rate-limit-per-client-rps"},
+		{"enabled-zero-max-clients", func(c *Config) {
+			c.RateLimitEnabled = true
+			c.RateLimitMaxTrackedClients = 0
+		}, "--rate-limit-max-tracked-clients"},
+		{"enabled-zero-ratio", func(c *Config) {
+			c.RateLimitEnabled = true
+			c.RateLimitReadWriteRatio = 0
+		}, "--rate-limit-read-write-ratio"},
+		{"disabled-zero-everything-ok", func(c *Config) {
+			c.RateLimitRequestsPerSecond = 0
+			c.RateLimitBurstSize = 0
+			c.RateLimitPerClientRPS = 0
+			c.RateLimitMaxTrackedClients = 0
+			c.RateLimitReadWriteRatio = 0
+		}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewConfig()
+			tt.mut(cfg)
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tt.wantErr)
+			}
+		})
+	}
+}
