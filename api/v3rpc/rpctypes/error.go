@@ -37,7 +37,9 @@ var (
 	ErrGRPCLeaseExist       = status.Error(codes.FailedPrecondition, "etcdserver: lease already exists")
 	ErrGRPCLeaseTTLTooLarge = status.Error(codes.OutOfRange, "etcdserver: too large lease TTL")
 
-	ErrGRPCWatchCanceled = status.Error(codes.Canceled, "etcdserver: watch canceled")
+	ErrGRPCWatchCanceled            = status.Error(codes.Canceled, "etcdserver: watch canceled")
+	ErrGRPCTooManyWatches           = status.Error(codes.ResourceExhausted, "etcdserver: too many watches on server")
+	ErrGRPCTooManyWatchesPerClient  = status.Error(codes.ResourceExhausted, "etcdserver: too many watches for this client")
 
 	ErrGRPCMemberExist            = status.Error(codes.FailedPrecondition, "etcdserver: member ID already exist")
 	ErrGRPCPeerURLExist           = status.Error(codes.FailedPrecondition, "etcdserver: Peer URLs already exists")
@@ -114,6 +116,10 @@ var (
 		ErrorDesc(ErrGRPCLeaseExist):       ErrGRPCLeaseExist,
 		ErrorDesc(ErrGRPCLeaseTTLTooLarge): ErrGRPCLeaseTTLTooLarge,
 
+		ErrorDesc(ErrGRPCWatchCanceled):           ErrGRPCWatchCanceled,
+		ErrorDesc(ErrGRPCTooManyWatches):          ErrGRPCTooManyWatches,
+		ErrorDesc(ErrGRPCTooManyWatchesPerClient): ErrGRPCTooManyWatchesPerClient,
+
 		ErrorDesc(ErrGRPCMemberExist):            ErrGRPCMemberExist,
 		ErrorDesc(ErrGRPCPeerURLExist):           ErrGRPCPeerURLExist,
 		ErrorDesc(ErrGRPCMemberNotEnoughStarted): ErrGRPCMemberNotEnoughStarted,
@@ -181,6 +187,10 @@ var (
 	ErrLeaseNotFound    = Error(ErrGRPCLeaseNotFound)
 	ErrLeaseExist       = Error(ErrGRPCLeaseExist)
 	ErrLeaseTTLTooLarge = Error(ErrGRPCLeaseTTLTooLarge)
+
+	ErrWatchCanceled           = Error(ErrGRPCWatchCanceled)
+	ErrTooManyWatches          = Error(ErrGRPCTooManyWatches)
+	ErrTooManyWatchesPerClient = Error(ErrGRPCTooManyWatchesPerClient)
 
 	ErrMemberExist            = Error(ErrGRPCMemberExist)
 	ErrPeerURLExist           = Error(ErrGRPCPeerURLExist)

@@ -30,6 +30,7 @@ import (
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/credentials"
 	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc/watchlimit"
 )
 
 const (
@@ -78,7 +79,13 @@ func Server(s *etcdserver.EtcdServer, tls *tls.Config, interceptor grpc.UnarySer
 	grpcServer := grpc.NewServer(append(opts, gopts...)...)
 
 	pb.RegisterKVServer(grpcServer, NewQuotaKVServer(s))
-	pb.RegisterWatchServer(grpcServer, NewWatchServer(s))
+
+	var watchTracker *watchlimit.WatchResourceTracker
+	if s.Cfg.ExperimentalMaxWatchesPerClient > 0 || s.Cfg.ExperimentalMaxWatchesTotal > 0 {
+		wlc := s.Cfg.WatchLimitConfig()
+		watchTracker = watchlimit.NewWatchResourceTracker(&wlc)
+	}
+	pb.RegisterWatchServer(grpcServer, NewWatchServer(s, watchTracker))
 	pb.RegisterLeaseServer(grpcServer, NewQuotaLeaseServer(s))
 	pb.RegisterClusterServer(grpcServer, NewClusterServer(s))
 	pb.RegisterAuthServer(grpcServer, NewAuthServer(s))

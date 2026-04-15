@@ -34,6 +34,7 @@ import (
 	"go.etcd.io/etcd/pkg/v3/traceutil"
 	"go.etcd.io/etcd/server/v3/auth"
 	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc/watchlimit"
 	"go.etcd.io/etcd/server/v3/etcdserver/apply"
 	"go.etcd.io/etcd/server/v3/storage/mvcc"
 )
@@ -52,12 +53,16 @@ type watchServer struct {
 	watchable mvcc.WatchableKV
 	ag        AuthGetter
 
+	// watchTracker enforces per-client and server-wide watch limits.
+	// May be nil when limiting is disabled.
+	watchTracker *watchlimit.WatchResourceTracker
+
 	// we want compile errors if new methods are added
 	pb.UnsafeWatchServer
 }
 
 // NewWatchServer returns a new watch server.
-func NewWatchServer(s *etcdserver.EtcdServer) pb.WatchServer {
+func NewWatchServer(s *etcdserver.EtcdServer, watchTracker *watchlimit.WatchResourceTracker) pb.WatchServer {
 	srv := &watchServer{
 		lg: s.Cfg.Logger,
 
@@ -69,6 +74,8 @@ func NewWatchServer(s *etcdserver.EtcdServer) pb.WatchServer {
 		sg:        s,
 		watchable: s.Watchable(),
 		ag:        s,
+
+		watchTracker: watchTracker,
 	}
 	if srv.lg == nil {
 		srv.lg = zap.NewNop()
@@ -142,6 +149,16 @@ type serverWatchStream struct {
 	watchStream mvcc.WatchStream
 	ctrlStream  chan *pb.WatchResponse
 
+	// watchTracker enforces per-client and server-wide watch limits.
+	// May be nil when limiting is disabled.
+	watchTracker *watchlimit.WatchResourceTracker
+	// clientID is the limiter identity for this stream's peer.
+	clientID string
+	// trackedWatches counts watches successfully registered with
+	// watchTracker on this stream so they can be released on close.
+	// Protected by mu.
+	trackedWatches int
+
 	// mu protects progress, prevKV, fragment
 	mu sync.RWMutex
 	// tracks the watchID that stream might need to send progress to
@@ -171,6 +188,9 @@ func (ws *watchServer) Watch(stream pb.Watch_WatchServer) (err error) {
 		sg:        ws.sg,
 		watchable: ws.watchable,
 		ag:        ws.ag,
+
+		watchTracker: ws.watchTracker,
+		clientID:     watchlimit.ClientIdentityFromContext(stream.Context()),
 
 		gRPCStream:  stream,
 		watchStream: ws.watchable.NewWatchStream(),
@@ -325,6 +345,24 @@ func (sws *serverWatchStream) recvLoop() error {
 				}
 			}
 
+			if sws.watchTracker != nil {
+				if terr := sws.watchTracker.Register(sws.clientID); terr != nil {
+					wr := &pb.WatchResponse{
+						Header:       sws.newResponseHeader(sws.watchStream.Rev()),
+						WatchId:      clientv3.InvalidWatchID,
+						Canceled:     true,
+						Created:      true,
+						CancelReason: terr.Error(),
+					}
+					select {
+					case sws.ctrlStream <- wr:
+						continue
+					case <-sws.closec:
+						return nil
+					}
+				}
+			}
+
 			filters := FiltersFromRequest(creq)
 			ctx, _ := traceutil.Tracer.Start(sws.gRPCStream.Context(), "watch", trace.WithAttributes(
 				attribute.String("key", string(creq.Key)),
@@ -347,9 +385,17 @@ func (sws *serverWatchStream) recvLoop() error {
 				if creq.Fragment {
 					sws.fragment[id] = true
 				}
+				if sws.watchTracker != nil {
+					sws.trackedWatches++
+				}
 				sws.mu.Unlock()
 			} else {
 				id = clientv3.InvalidWatchID
+				// Roll back the tracker reservation taken above since the
+				// watch was not actually created.
+				if sws.watchTracker != nil {
+					sws.watchTracker.Unregister(sws.clientID)
+				}
 			}
 
 			wr := &pb.WatchResponse{
@@ -387,6 +433,10 @@ func (sws *serverWatchStream) recvLoop() error {
 					delete(sws.progress, mvcc.WatchID(id))
 					delete(sws.prevKV, mvcc.WatchID(id))
 					delete(sws.fragment, mvcc.WatchID(id))
+					if sws.watchTracker != nil && sws.trackedWatches > 0 {
+						sws.trackedWatches--
+						sws.watchTracker.Unregister(sws.clientID)
+					}
 					sws.mu.Unlock()
 				}
 			}
@@ -621,6 +671,15 @@ func (sws *serverWatchStream) close() {
 	sws.watchStream.Close()
 	close(sws.closec)
 	sws.wg.Wait()
+	// Release any watches that were still registered when the stream
+	// closed (client disconnect without explicit CancelRequests).
+	if sws.watchTracker != nil {
+		sws.mu.Lock()
+		for ; sws.trackedWatches > 0; sws.trackedWatches-- {
+			sws.watchTracker.Unregister(sws.clientID)
+		}
+		sws.mu.Unlock()
+	}
 }
 
 func (sws *serverWatchStream) newResponseHeader(rev int64) *pb.ResponseHeader {

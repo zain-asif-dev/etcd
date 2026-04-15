@@ -172,6 +172,31 @@ type ServerConfig struct {
 
 	WatchProgressNotifyInterval time.Duration
 
+	// ExperimentalMaxWatchesPerClient is the maximum number of active watches a
+	// single client (identified by authenticated user, or peer IP when auth is
+	// disabled) may hold across all of its watch streams. 0 disables the limit.
+	ExperimentalMaxWatchesPerClient uint
+	// ExperimentalMaxWatchesTotal is the server-wide maximum number of active
+	// watches across all clients. 0 disables the limit.
+	ExperimentalMaxWatchesTotal uint
+	// ExperimentalMaxPendingEventsPerWatchStream is the maximum number of
+	// undelivered events buffered for a single watch stream before backpressure
+	// is applied. 0 disables the limit.
+	ExperimentalMaxPendingEventsPerWatchStream uint
+	// ExperimentalWatchMemorySoftLimitBytes is the estimated total size of
+	// buffered watch events at which the server begins graceful degradation.
+	// 0 disables memory-pressure degradation.
+	ExperimentalWatchMemorySoftLimitBytes int64
+	// ExperimentalWatchCriticalKeyPrefixes lists key prefixes whose watches are
+	// never paused or cancelled under memory pressure.
+	ExperimentalWatchCriticalKeyPrefixes []string
+	// ExperimentalWatchLowPriorityKeyPrefixes lists key prefixes whose watches
+	// are paused or cancelled first under memory pressure.
+	ExperimentalWatchLowPriorityKeyPrefixes []string
+	// ExperimentalWatchDegradeCheckInterval is the period between evaluations of
+	// watch memory pressure and degradation level. 0 uses the built-in default.
+	ExperimentalWatchDegradeCheckInterval time.Duration
+
 	// UnsafeNoFsync disables all uses of fsync.
 	// Setting this is unsafe and will cause data loss.
 	UnsafeNoFsync bool `json:"unsafe-no-fsync"`
@@ -204,6 +229,46 @@ type ServerConfig struct {
 
 	// Metrics types of metrics - should be either 'basic' or 'extensive'
 	Metrics string
+}
+
+// WatchLimitConfig groups the runtime-reloadable watch resource limits.
+// Zero values mean the corresponding limit is disabled.
+type WatchLimitConfig struct {
+	// MaxWatchesPerClient is the maximum number of active watches a single
+	// client (auth user or peer IP) may hold. 0 disables the limit.
+	MaxWatchesPerClient uint
+	// MaxWatchesTotal is the server-wide maximum number of active watches.
+	// 0 disables the limit.
+	MaxWatchesTotal uint
+	// MaxPendingEventsPerWatchStream is the maximum number of buffered events
+	// per watch stream before backpressure is applied. 0 disables the limit.
+	MaxPendingEventsPerWatchStream uint
+	// MemorySoftLimitBytes is the estimated buffered watch event size at which
+	// graceful degradation begins. 0 disables degradation.
+	MemorySoftLimitBytes int64
+	// CriticalKeyPrefixes are key prefixes whose watches are never paused or
+	// cancelled under memory pressure.
+	CriticalKeyPrefixes []string
+	// LowPriorityKeyPrefixes are key prefixes whose watches are paused or
+	// cancelled first under memory pressure.
+	LowPriorityKeyPrefixes []string
+	// DegradeCheckInterval is the period between memory-pressure evaluations.
+	// 0 uses the built-in default.
+	DegradeCheckInterval time.Duration
+}
+
+// WatchLimitConfig returns the watch resource limit settings as a single
+// struct suitable for hot reload.
+func (c *ServerConfig) WatchLimitConfig() WatchLimitConfig {
+	return WatchLimitConfig{
+		MaxWatchesPerClient:            c.ExperimentalMaxWatchesPerClient,
+		MaxWatchesTotal:                c.ExperimentalMaxWatchesTotal,
+		MaxPendingEventsPerWatchStream: c.ExperimentalMaxPendingEventsPerWatchStream,
+		MemorySoftLimitBytes:           c.ExperimentalWatchMemorySoftLimitBytes,
+		CriticalKeyPrefixes:            c.ExperimentalWatchCriticalKeyPrefixes,
+		LowPriorityKeyPrefixes:         c.ExperimentalWatchLowPriorityKeyPrefixes,
+		DegradeCheckInterval:           c.ExperimentalWatchDegradeCheckInterval,
+	}
 }
 
 // VerifyBootstrap sanity-checks the initial config for bootstrap case
