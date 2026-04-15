@@ -55,6 +55,8 @@ var (
 
 	ErrGRPCRequestTooLarge        = status.Error(codes.InvalidArgument, "etcdserver: request is too large")
 	ErrGRPCRequestTooManyRequests = status.Error(codes.ResourceExhausted, "etcdserver: too many requests")
+	ErrGRPCRequestRateLimited     = status.Error(codes.ResourceExhausted, "etcdserver: request rate limited")
+	ErrGRPCServerOverloaded       = status.Error(codes.ResourceExhausted, "etcdserver: server overloaded, retry later")
 
 	ErrGRPCRootUserNotExist     = status.Error(codes.FailedPrecondition, "etcdserver: root user does not exist")
 	ErrGRPCRootRoleNotExist     = status.Error(codes.FailedPrecondition, "etcdserver: root user does not have root role")
@@ -126,6 +128,8 @@ var (
 
 		ErrorDesc(ErrGRPCRequestTooLarge):        ErrGRPCRequestTooLarge,
 		ErrorDesc(ErrGRPCRequestTooManyRequests): ErrGRPCRequestTooManyRequests,
+		ErrorDesc(ErrGRPCRequestRateLimited):     ErrGRPCRequestRateLimited,
+		ErrorDesc(ErrGRPCServerOverloaded):       ErrGRPCServerOverloaded,
 
 		ErrorDesc(ErrGRPCRootUserNotExist):     ErrGRPCRootUserNotExist,
 		ErrorDesc(ErrGRPCRootRoleNotExist):     ErrGRPCRootRoleNotExist,
@@ -191,8 +195,10 @@ var (
 	ErrMemberLearnerNotReady  = Error(ErrGRPCLearnerNotReady)
 	ErrTooManyLearners        = Error(ErrGRPCTooManyLearners)
 
-	ErrRequestTooLarge = Error(ErrGRPCRequestTooLarge)
-	ErrTooManyRequests = Error(ErrGRPCRequestTooManyRequests)
+	ErrRequestTooLarge    = Error(ErrGRPCRequestTooLarge)
+	ErrTooManyRequests    = Error(ErrGRPCRequestTooManyRequests)
+	ErrRequestRateLimited = Error(ErrGRPCRequestRateLimited)
+	ErrServerOverloaded   = Error(ErrGRPCServerOverloaded)
 
 	ErrRootUserNotExist     = Error(ErrGRPCRootUserNotExist)
 	ErrRootRoleNotExist     = Error(ErrGRPCRootRoleNotExist)

@@ -51,6 +51,7 @@ import (
 	"go.etcd.io/etcd/server/v3/etcdserver/api/rafthttp"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v3compactor"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v3discovery"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc/admission"
 	"go.etcd.io/etcd/server/v3/features"
 )
 
@@ -231,6 +232,27 @@ type Config struct {
 	// MaxConcurrentStreams specifies the maximum number of concurrent
 	// streams that each client can open at a time.
 	MaxConcurrentStreams uint32 `json:"max-concurrent-streams"`
+
+	// AdmissionControlEnabled enables the gRPC admission-control interceptor
+	// (per-endpoint rate limiting and priority-based load shedding).
+	AdmissionControlEnabled bool `json:"admission-control-enabled"`
+	// AdmissionControlDryRun makes the admission controller evaluate
+	// decisions but never reject; would-be rejections are recorded in the
+	// admission_dry_run_rejected_total metric instead.
+	AdmissionControlDryRun bool `json:"admission-control-dry-run"`
+	// RateLimitReads is the maximum read requests per second admitted by the
+	// admission controller. 0 means unlimited.
+	RateLimitReads uint `json:"rate-limit-reads"`
+	// RateLimitWrites is the maximum write requests per second admitted by
+	// the admission controller. 0 means unlimited.
+	RateLimitWrites uint `json:"rate-limit-writes"`
+	// RateLimitBurstFactor is multiplied by the per-group rate limit to
+	// derive the token-bucket burst size. Must be >= 1.0.
+	RateLimitBurstFactor float64 `json:"rate-limit-burst-factor"`
+	// OverloadThreshold is the fraction (0,1] of MaxConcurrentStreams at
+	// which the admission controller begins shedding lower-priority
+	// requests.
+	OverloadThreshold float64 `json:"overload-threshold"`
 
 	//revive:disable:var-naming
 	ListenPeerUrls, ListenClientUrls, ListenClientHttpUrls []url.URL
@@ -526,6 +548,13 @@ func NewConfig() *Config {
 		WarningApplyDuration:        DefaultWarningApplyDuration,
 		WarningUnaryRequestDuration: DefaultWarningUnaryRequestDuration,
 
+		AdmissionControlEnabled: false,
+		AdmissionControlDryRun:  false,
+		RateLimitReads:          0,
+		RateLimitWrites:         0,
+		RateLimitBurstFactor:    admission.DefaultBurstFactor,
+		OverloadThreshold:       admission.DefaultOverloadThreshold,
+
 		GRPCKeepAliveMinTime:  DefaultGRPCKeepAliveMinTime,
 		GRPCKeepAliveInterval: DefaultGRPCKeepAliveInterval,
 		GRPCKeepAliveTimeout:  DefaultGRPCKeepAliveTimeout,
@@ -651,6 +680,13 @@ func (cfg *Config) AddFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&cfg.SocketOpts.ReuseAddress, "socket-reuse-address", cfg.SocketOpts.ReuseAddress, "Enable to set socket option SO_REUSEADDR on listeners allowing binding to an address in `TIME_WAIT` state.")
 
 	fs.Var(flags.NewUint32Value(cfg.MaxConcurrentStreams), "max-concurrent-streams", "Maximum concurrent streams that each client can open at a time.")
+
+	fs.BoolVar(&cfg.AdmissionControlEnabled, "admission-control-enabled", cfg.AdmissionControlEnabled, "Enable the gRPC admission-control interceptor (per-endpoint rate limiting and priority-based load shedding).")
+	fs.BoolVar(&cfg.AdmissionControlDryRun, "admission-control-dry-run", cfg.AdmissionControlDryRun, "Evaluate admission-control decisions but never reject; record would-be rejections in the admission_dry_run_rejected_total metric instead.")
+	fs.UintVar(&cfg.RateLimitReads, "rate-limit-reads", cfg.RateLimitReads, "Maximum read requests per second admitted by the admission controller. 0 means unlimited.")
+	fs.UintVar(&cfg.RateLimitWrites, "rate-limit-writes", cfg.RateLimitWrites, "Maximum write requests per second admitted by the admission controller. 0 means unlimited.")
+	fs.Float64Var(&cfg.RateLimitBurstFactor, "rate-limit-burst-factor", cfg.RateLimitBurstFactor, "Multiplier applied to a rate limit to derive its token-bucket burst size. Must be >= 1.0.")
+	fs.Float64Var(&cfg.OverloadThreshold, "overload-threshold", cfg.OverloadThreshold, "Fraction (0,1] of max-concurrent-streams at which lower-priority requests are shed.")
 
 	// raft connection timeouts
 	fs.DurationVar(&rafthttp.ConnReadTimeout, "raft-read-timeout", rafthttp.DefaultConnReadTimeout, "Read timeout set on each rafthttp connection")
@@ -1049,6 +1085,15 @@ func (cfg *Config) Validate() error {
 
 	if cfg.CompactHashCheckTime <= 0 {
 		return fmt.Errorf("--compact-hash-check-time must be >0 (set to %v)", cfg.CompactHashCheckTime)
+	}
+
+	if cfg.AdmissionControlEnabled {
+		if cfg.RateLimitBurstFactor < 1.0 {
+			return fmt.Errorf("--rate-limit-burst-factor must be >= 1.0 (set to %v)", cfg.RateLimitBurstFactor)
+		}
+		if cfg.OverloadThreshold <= 0 || cfg.OverloadThreshold > 1.0 {
+			return fmt.Errorf("--overload-threshold must be in (0, 1] (set to %v)", cfg.OverloadThreshold)
+		}
 	}
 
 	// If `--name` isn't configured, then multiple members may have the same "default" name.

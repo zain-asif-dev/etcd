@@ -58,6 +58,7 @@ import (
 	"go.etcd.io/etcd/server/v3/etcdserver/api/etcdhttp"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/membership"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/rafthttp"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc/admission"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v3client"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v3election"
 	epb "go.etcd.io/etcd/server/v3/etcdserver/api/v3election/v3electionpb"
@@ -146,6 +147,12 @@ type ClusterConfig struct {
 
 	MaxTxnOps       uint
 	MaxRequestBytes uint
+
+	AdmissionControlEnabled bool
+	RateLimitReads          uint
+	RateLimitWrites         uint
+	RateLimitBurstFactor    float64
+	OverloadThreshold       float64
 
 	SnapshotCount          uint64
 	SnapshotCatchUpEntries uint64
@@ -269,6 +276,11 @@ func (c *Cluster) MustNewMember(t testutil.TB) *Member {
 			BackendBatchInterval:        c.Cfg.BackendBatchInterval,
 			MaxTxnOps:                   c.Cfg.MaxTxnOps,
 			MaxRequestBytes:             c.Cfg.MaxRequestBytes,
+			AdmissionControlEnabled:     c.Cfg.AdmissionControlEnabled,
+			RateLimitReads:              c.Cfg.RateLimitReads,
+			RateLimitWrites:             c.Cfg.RateLimitWrites,
+			RateLimitBurstFactor:        c.Cfg.RateLimitBurstFactor,
+			OverloadThreshold:           c.Cfg.OverloadThreshold,
 			SnapshotCount:               c.Cfg.SnapshotCount,
 			SnapshotCatchUpEntries:      c.Cfg.SnapshotCatchUpEntries,
 			GRPCKeepAliveMinTime:        c.Cfg.GRPCKeepAliveMinTime,
@@ -594,6 +606,11 @@ type MemberConfig struct {
 	BackendBatchInterval        time.Duration
 	MaxTxnOps                   uint
 	MaxRequestBytes             uint
+	AdmissionControlEnabled     bool
+	RateLimitReads              uint
+	RateLimitWrites             uint
+	RateLimitBurstFactor        float64
+	OverloadThreshold           float64
 	SnapshotCount               uint64
 	SnapshotCatchUpEntries      uint64
 	GRPCKeepAliveMinTime        time.Duration
@@ -673,6 +690,17 @@ func MustNewMember(t testutil.TB, mcfg MemberConfig) *Member {
 	m.MaxRequestBytes = mcfg.MaxRequestBytes
 	if m.MaxRequestBytes == 0 {
 		m.MaxRequestBytes = embed.DefaultMaxRequestBytes
+	}
+	m.AdmissionControlEnabled = mcfg.AdmissionControlEnabled
+	m.RateLimitReads = mcfg.RateLimitReads
+	m.RateLimitWrites = mcfg.RateLimitWrites
+	m.RateLimitBurstFactor = mcfg.RateLimitBurstFactor
+	if m.RateLimitBurstFactor == 0 {
+		m.RateLimitBurstFactor = admission.DefaultBurstFactor
+	}
+	m.OverloadThreshold = mcfg.OverloadThreshold
+	if m.OverloadThreshold == 0 {
+		m.OverloadThreshold = admission.DefaultOverloadThreshold
 	}
 	m.SnapshotCount = etcdserver.DefaultSnapshotCount
 	if mcfg.SnapshotCount != 0 {
