@@ -171,6 +171,9 @@ type ServerConfig struct {
 	TracerOptions []otelgrpc.Option
 
 	WatchProgressNotifyInterval time.Duration
+	WatchVictimMaxCount         int
+	WatchVictimEvictionInterval time.Duration
+	WatchVictimMaxAge           time.Duration
 
 	// ExperimentalMaxWatchesPerClient is the maximum number of active watches a
 	// single client (identified by authenticated user, or peer IP when auth is

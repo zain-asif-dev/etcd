@@ -417,6 +417,61 @@ func TestWatcherRequestProgressAll(t *testing.T) {
 	}
 }
 
+// TestWatcherVictimSinceTracking verifies that victimSince is stamped when a
+// watcher first enters victim state and cleared when it leaves it.
+func TestWatcherVictimSinceTracking(t *testing.T) {
+	oldChanBufLen := chanBufLen
+	chanBufLen = 1
+	defer func() { chanBufLen = oldChanBufLen }()
+
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := newWatchableStore(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{})
+	defer cleanup(s, b)
+
+	testKey, testValue := []byte("foo"), []byte("bar")
+	w := s.NewWatchStream()
+	defer w.Close()
+	id, _ := w.Watch(t.Context(), 0, testKey, nil, 0)
+	wa := w.(*watchStream).watchers[id]
+
+	if !wa.victimSince.IsZero() {
+		t.Fatalf("victimSince = %v, want zero before becoming victim", wa.victimSince)
+	}
+
+	before := time.Now()
+	s.Put(testKey, testValue, lease.NoLease) // fills 1-slot channel
+	s.Put(testKey, testValue, lease.NoLease) // forces victim via notify()
+	after := time.Now()
+
+	if !wa.victim {
+		t.Fatal("watcher should be a victim after channel is full")
+	}
+	if wa.victimSince.Before(before) || wa.victimSince.After(after) {
+		t.Fatalf("victimSince = %v, want between %v and %v", wa.victimSince, before, after)
+	}
+	first := wa.victimSince
+
+	// A failed retry must not reset the timestamp.
+	if s.moveVictims() != 0 {
+		t.Fatal("expected moveVictims to fail while channel is full")
+	}
+	if !wa.victimSince.Equal(first) {
+		t.Fatalf("victimSince changed across failed retry: got %v want %v", wa.victimSince, first)
+	}
+
+	// Drain so the watcher can recover.
+	<-w.Chan()
+	if s.moveVictims() != 1 {
+		t.Fatal("expected moveVictims to recover the watcher")
+	}
+	if wa.victim {
+		t.Fatal("watcher should no longer be a victim")
+	}
+	if !wa.victimSince.IsZero() {
+		t.Fatalf("victimSince = %v, want zero after recovery", wa.victimSince)
+	}
+}
+
 func TestWatcherWatchWithFilter(t *testing.T) {
 	b, _ := betesting.NewDefaultTmpBackend(t)
 	s := New(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{})

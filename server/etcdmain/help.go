@@ -282,6 +282,12 @@ Features:
     Skip verification of SAN field in client certificate for peer connections.
   --watch-progress-notify-interval '10m'
     Duration of periodical watch progress notification.
+  --watch-victim-max-count '0'
+    Maximum number of blocked victim watchers allowed before the oldest are force-evicted. 0 means unlimited.
+  --watch-victim-eviction-interval '1m'
+    How often to check for and evict long-standing victim watchers. 0 disables eviction.
+  --watch-victim-max-age '5m'
+    Maximum time a watcher may remain in victim state before being force-cancelled. 0 means unlimited.
   --warning-apply-duration '100ms'
     Warning is generated if requests take more than this duration.
   --bootstrap-defrag-threshold-megabytes

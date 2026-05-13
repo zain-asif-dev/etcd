@@ -940,6 +940,281 @@ func TestWatchVictims(t *testing.T) {
 	}
 }
 
+// addTestVictim is a test helper that manually places a watcher into the
+// victim list with the given victimSince timestamp so that evictVictims can
+// be unit-tested deterministically without racing the syncVictimsLoop.
+func addTestVictim(s *watchableStore, id WatchID, ch chan WatchResponse, since time.Time) *watcher {
+	w := &watcher{
+		key:         []byte("foo"),
+		id:          id,
+		ch:          ch,
+		victim:      true,
+		victimSince: since,
+	}
+	s.mu.Lock()
+	s.addVictim(watcherBatch{w: &eventBatch{}})
+	s.mu.Unlock()
+	return w
+}
+
+// TestWatchVictimEvictionMaxAge verifies that watchers exceeding
+// WatchVictimMaxAge are force-cancelled and that the cancellation response
+// carries Evicted=true.
+func TestWatchVictimEvictionMaxAge(t *testing.T) {
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := newWatchableStore(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{
+		WatchVictimMaxAge: time.Minute,
+	})
+	defer cleanup(s, b)
+
+	now := time.Now()
+	ch := make(chan WatchResponse, 4)
+	old := addTestVictim(s, 1, ch, now.Add(-2*time.Minute))
+	young := addTestVictim(s, 2, ch, now.Add(-30*time.Second))
+
+	evicted := s.evictVictims(now)
+	require.Equal(t, 1, evicted)
+	require.True(t, old.evicted, "old victim should be evicted")
+	require.False(t, old.victim)
+	require.False(t, young.evicted, "young victim should not be evicted")
+	require.True(t, young.victim)
+
+	select {
+	case resp := <-ch:
+		require.Equal(t, WatchID(1), resp.WatchID)
+		require.True(t, resp.Evicted)
+	default:
+		t.Fatal("expected eviction response on channel")
+	}
+
+	s.mu.RLock()
+	total := 0
+	for _, wb := range s.victims {
+		total += len(wb)
+	}
+	s.mu.RUnlock()
+	require.Equal(t, 1, total, "young victim should remain")
+}
+
+// TestWatchVictimEvictionMaxCountFIFO verifies that when the victim count
+// exceeds WatchVictimMaxCount the oldest victims are evicted first and that
+// multiple watchers can be evicted in a single cycle.
+func TestWatchVictimEvictionMaxCountFIFO(t *testing.T) {
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := newWatchableStore(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{
+		WatchVictimMaxCount: 2,
+	})
+	defer cleanup(s, b)
+
+	now := time.Now()
+	ch := make(chan WatchResponse, 8)
+	// Five victims with strictly increasing victimSince so FIFO ordering is
+	// well-defined: w[0] is oldest, w[4] is newest.
+	var ws [5]*watcher
+	for i := 0; i < 5; i++ {
+		ws[i] = addTestVictim(s, WatchID(i), ch, now.Add(-time.Duration(5-i)*time.Second))
+	}
+
+	evicted := s.evictVictims(now)
+	require.Equal(t, 3, evicted, "5 victims with max 2 -> 3 evicted")
+
+	// Oldest three (w[0], w[1], w[2]) must be evicted; newest two survive.
+	for i := 0; i < 3; i++ {
+		require.Truef(t, ws[i].evicted, "watcher %d (oldest) should be evicted", i)
+	}
+	for i := 3; i < 5; i++ {
+		require.Falsef(t, ws[i].evicted, "watcher %d (newest) should survive", i)
+	}
+
+	got := make(map[WatchID]bool)
+	for i := 0; i < 3; i++ {
+		resp := <-ch
+		require.True(t, resp.Evicted)
+		got[resp.WatchID] = true
+	}
+	require.Equal(t, map[WatchID]bool{0: true, 1: true, 2: true}, got)
+}
+
+// TestWatchVictimEvictionRecoverBeforeDeadline verifies that a watcher which
+// recovers from victim state (via moveVictims) before the eviction deadline
+// is not evicted, has its victimSince cleared, and rejoins a watcher group.
+func TestWatchVictimEvictionRecoverBeforeDeadline(t *testing.T) {
+	oldChanBufLen := chanBufLen
+	chanBufLen = 1
+	defer func() { chanBufLen = oldChanBufLen }()
+
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := newWatchableStore(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{
+		WatchVictimMaxAge: 10 * time.Minute,
+	})
+	defer cleanup(s, b)
+
+	testKey, testValue := []byte("foo"), []byte("bar")
+	w := s.NewWatchStream()
+	defer w.Close()
+	id, err := w.Watch(t.Context(), 0, testKey, nil, 0)
+	require.NoError(t, err)
+
+	// First put fills the 1-slot channel; second put forces the watcher into
+	// victim state via notify().
+	s.Put(testKey, testValue, lease.NoLease)
+	s.Put(testKey, testValue, lease.NoLease)
+
+	wa := w.(*watchStream).watchers[id]
+	require.True(t, wa.victim, "watcher should be a victim after channel filled")
+	require.False(t, wa.victimSince.IsZero(), "victimSince should be set")
+
+	// Drain the channel so moveVictims can deliver the pending event.
+	<-w.Chan()
+	moved := s.moveVictims()
+	require.Equal(t, 1, moved)
+	require.False(t, wa.victim, "watcher should have recovered")
+	require.True(t, wa.victimSince.IsZero(), "victimSince should be cleared on recovery")
+	<-w.Chan() // consume the recovered event
+
+	// Eviction must be a no-op since there are no victims left.
+	require.Equal(t, 0, s.evictVictims(time.Now().Add(time.Hour)))
+	require.False(t, wa.evicted)
+}
+
+// TestWatchVictimEvictionDefaultUnlimited verifies that with default
+// (zero-value) configuration no eviction ever takes place, preserving the
+// pre-existing behaviour exactly.
+func TestWatchVictimEvictionDefaultUnlimited(t *testing.T) {
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := newWatchableStore(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{})
+	defer cleanup(s, b)
+
+	now := time.Now()
+	ch := make(chan WatchResponse, 8)
+	for i := 0; i < 5; i++ {
+		addTestVictim(s, WatchID(i), ch, now.Add(-time.Hour))
+	}
+
+	require.Equal(t, 0, s.evictVictims(now), "default config must never evict")
+	s.mu.RLock()
+	total := 0
+	for _, wb := range s.victims {
+		total += len(wb)
+	}
+	s.mu.RUnlock()
+	require.Equal(t, 5, total)
+	require.Equal(t, 0, len(ch))
+}
+
+// TestWatchVictimEvictionLoopDisabled verifies that a zero
+// WatchVictimEvictionInterval disables the background eviction loop and that
+// the store still closes cleanly.
+func TestWatchVictimEvictionLoopDisabled(t *testing.T) {
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := New(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{
+		WatchVictimEvictionInterval: 0,
+		WatchVictimMaxAge:           time.Nanosecond,
+		WatchVictimMaxCount:         1,
+	})
+	defer cleanup(s, b)
+
+	ws := s.(*watchableStore)
+	// Permanently full channels so syncVictimsLoop cannot recover them; if
+	// an eviction loop were running these would be evicted immediately.
+	var victims []*watcher
+	for i := 0; i < 3; i++ {
+		full := make(chan WatchResponse, 1)
+		full <- WatchResponse{}
+		victims = append(victims, addTestVictim(ws, WatchID(i), full, time.Now().Add(-time.Hour)))
+	}
+
+	// Give any hypothetical eviction loop ample time to fire.
+	time.Sleep(50 * time.Millisecond)
+
+	ws.mu.RLock()
+	for _, w := range victims {
+		require.False(t, w.evicted, "eviction loop must be disabled when interval is 0")
+		require.True(t, w.victim, "victim should remain a victim")
+	}
+	ws.mu.RUnlock()
+}
+
+// TestWatchVictimEvictionLoop verifies that the background goroutine actually
+// fires at the configured interval and evicts stale victims end-to-end.
+func TestWatchVictimEvictionLoop(t *testing.T) {
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := New(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{
+		WatchVictimEvictionInterval: 20 * time.Millisecond,
+		WatchVictimMaxAge:           10 * time.Millisecond,
+	})
+	defer cleanup(s, b)
+
+	ws := s.(*watchableStore)
+	// Use a watcher whose channel is permanently full so that
+	// syncVictimsLoop cannot recover it before the eviction loop fires.
+	full := make(chan WatchResponse, 1)
+	full <- WatchResponse{}
+	w := addTestVictim(ws, 1, full, time.Now().Add(-time.Second))
+
+	require.Eventually(t, func() bool {
+		ws.mu.RLock()
+		defer ws.mu.RUnlock()
+		return w.evicted
+	}, 2*time.Second, 5*time.Millisecond, "victim should be evicted by background loop")
+}
+
+// TestWatchVictimEvictionConcurrent stresses evictVictims while watches are
+// being created and cancelled concurrently to ensure there are no data races
+// or deadlocks.
+func TestWatchVictimEvictionConcurrent(t *testing.T) {
+	b, _ := betesting.NewDefaultTmpBackend(t)
+	s := newWatchableStore(zaptest.NewLogger(t), b, &lease.FakeLessor{}, StoreConfig{
+		WatchVictimMaxCount: 1,
+		WatchVictimMaxAge:   time.Millisecond,
+	})
+	defer cleanup(s, b)
+
+	stop := make(chan struct{})
+	var workWg, evictWg sync.WaitGroup
+
+	evictWg.Add(1)
+	go func() {
+		defer evictWg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				s.evictVictims(time.Now())
+			}
+		}
+	}()
+
+	workWg.Add(1)
+	go func() {
+		defer workWg.Done()
+		for i := 0; i < 200; i++ {
+			ch := make(chan WatchResponse, 1)
+			addTestVictim(s, WatchID(i), ch, time.Now().Add(-time.Second))
+		}
+	}()
+
+	workWg.Add(1)
+	go func() {
+		defer workWg.Done()
+		ws := s.NewWatchStream()
+		defer ws.Close()
+		for i := 0; i < 200; i++ {
+			id, err := ws.Watch(t.Context(), 0, []byte("foo"), nil, 0)
+			if err == nil {
+				ws.Cancel(id)
+			}
+		}
+	}()
+
+	workWg.Wait()
+	close(stop)
+	evictWg.Wait()
+	// drain remaining victims
+	s.evictVictims(time.Now().Add(time.Hour))
+}
+
 // TestStressWatchCancelClose tests closing a watch stream while
 // canceling its watches.
 func TestStressWatchCancelClose(t *testing.T) {

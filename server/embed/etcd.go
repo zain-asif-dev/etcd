@@ -225,6 +225,9 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		CompactionBatchLimit:              cfg.CompactionBatchLimit,
 		CompactionSleepInterval:           cfg.CompactionSleepInterval,
 		WatchProgressNotifyInterval:       cfg.WatchProgressNotifyInterval,
+		WatchVictimMaxCount:               cfg.WatchVictimMaxCount,
+		WatchVictimEvictionInterval:       cfg.WatchVictimEvictionInterval,
+		WatchVictimMaxAge:                 cfg.WatchVictimMaxAge,
 
 		ExperimentalMaxWatchesPerClient:            cfg.ExperimentalMaxWatchesPerClient,
 		ExperimentalMaxWatchesTotal:                cfg.ExperimentalMaxWatchesTotal,
