@@ -228,6 +228,15 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		WatchVictimMaxCount:               cfg.WatchVictimMaxCount,
 		WatchVictimEvictionInterval:       cfg.WatchVictimEvictionInterval,
 		WatchVictimMaxAge:                 cfg.WatchVictimMaxAge,
+
+		ExperimentalMaxWatchesPerClient:            cfg.ExperimentalMaxWatchesPerClient,
+		ExperimentalMaxWatchesTotal:                cfg.ExperimentalMaxWatchesTotal,
+		ExperimentalMaxPendingEventsPerWatchStream: cfg.ExperimentalMaxPendingEventsPerWatchStream,
+		ExperimentalWatchMemorySoftLimitBytes:      cfg.ExperimentalWatchMemorySoftLimitBytes,
+		ExperimentalWatchCriticalKeyPrefixes:       cfg.ExperimentalWatchCriticalKeyPrefixes,
+		ExperimentalWatchLowPriorityKeyPrefixes:    cfg.ExperimentalWatchLowPriorityKeyPrefixes,
+		ExperimentalWatchDegradeCheckInterval:      cfg.ExperimentalWatchDegradeCheckInterval,
+
 		DowngradeCheckTime:                cfg.DowngradeCheckTime,
 		WarningApplyDuration:              cfg.WarningApplyDuration,
 		WarningUnaryRequestDuration:       cfg.WarningUnaryRequestDuration,

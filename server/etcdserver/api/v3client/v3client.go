@@ -36,7 +36,7 @@ func New(s *etcdserver.EtcdServer) *clientv3.Client {
 	lc := adapter.LeaseServerToLeaseClient(v3rpc.NewQuotaLeaseServer(s))
 	c.Lease = clientv3.NewLeaseFromLeaseClient(lc, c, time.Second)
 
-	wc := adapter.WatchServerToWatchClient(v3rpc.NewWatchServer(s))
+	wc := adapter.WatchServerToWatchClient(v3rpc.NewWatchServer(s, nil))
 	c.Watcher = &watchWrapper{clientv3.NewWatchFromWatchClient(wc, c)}
 
 	mc := adapter.MaintenanceServerToMaintenanceClient(v3rpc.NewMaintenanceServer(s, nil))

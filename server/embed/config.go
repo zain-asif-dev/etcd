@@ -377,6 +377,26 @@ type Config struct {
 	// WatchVictimMaxAge is the maximum time a watcher may remain in victim
 	// state before being force-cancelled. 0 means unlimited.
 	WatchVictimMaxAge time.Duration `json:"watch-victim-max-age"`
+	// ExperimentalMaxWatchesPerClient is the maximum number of active watches a single
+	// client (auth user or peer IP) may hold. 0 disables the limit.
+	ExperimentalMaxWatchesPerClient uint `json:"experimental-max-watches-per-client"`
+	// ExperimentalMaxWatchesTotal is the server-wide maximum number of active watches. 0 disables the limit.
+	ExperimentalMaxWatchesTotal uint `json:"experimental-max-watches-total"`
+	// ExperimentalMaxPendingEventsPerWatchStream is the maximum number of buffered events
+	// per watch stream before backpressure is applied. 0 disables the limit.
+	ExperimentalMaxPendingEventsPerWatchStream uint `json:"experimental-max-pending-events-per-watch-stream"`
+	// ExperimentalWatchMemorySoftLimitBytes triggers graceful watch degradation when the
+	// estimated buffered watch event size reaches this threshold. 0 disables degradation.
+	ExperimentalWatchMemorySoftLimitBytes int64 `json:"experimental-watch-memory-soft-limit-bytes"`
+	// ExperimentalWatchCriticalKeyPrefixes are key prefixes whose watches are never
+	// paused or cancelled under memory pressure.
+	ExperimentalWatchCriticalKeyPrefixes []string `json:"experimental-watch-critical-key-prefixes"`
+	// ExperimentalWatchLowPriorityKeyPrefixes are key prefixes whose watches are paused
+	// or cancelled first under memory pressure.
+	ExperimentalWatchLowPriorityKeyPrefixes []string `json:"experimental-watch-low-priority-key-prefixes"`
+	// ExperimentalWatchDegradeCheckInterval is the period between watch memory-pressure
+	// evaluations. 0 uses the built-in default.
+	ExperimentalWatchDegradeCheckInterval time.Duration `json:"experimental-watch-degrade-check-interval"`
 	// WarningApplyDuration is the time duration after which a warning is generated if applying request
 	WarningApplyDuration time.Duration `json:"warning-apply-duration"`
 	// BootstrapDefragThresholdMegabytes is the minimum number of megabytes needed to be freed for etcd server to
@@ -767,6 +787,16 @@ func (cfg *Config) AddFlags(fs *flag.FlagSet) {
 	fs.IntVar(&cfg.WatchVictimMaxCount, "watch-victim-max-count", cfg.WatchVictimMaxCount, "Maximum number of blocked victim watchers allowed before the oldest are force-evicted. 0 means unlimited.")
 	fs.DurationVar(&cfg.WatchVictimEvictionInterval, "watch-victim-eviction-interval", cfg.WatchVictimEvictionInterval, "How often to check for and evict long-standing victim watchers. 0 disables eviction.")
 	fs.DurationVar(&cfg.WatchVictimMaxAge, "watch-victim-max-age", cfg.WatchVictimMaxAge, "Maximum time a watcher may remain in victim state before being force-cancelled. 0 means unlimited.")
+
+	// experimental watch resource limits
+	fs.UintVar(&cfg.ExperimentalMaxWatchesPerClient, "experimental-max-watches-per-client", cfg.ExperimentalMaxWatchesPerClient, "Maximum number of active watches per client (auth user or peer IP). 0 disables the limit.")
+	fs.UintVar(&cfg.ExperimentalMaxWatchesTotal, "experimental-max-watches-total", cfg.ExperimentalMaxWatchesTotal, "Server-wide maximum number of active watches. 0 disables the limit.")
+	fs.UintVar(&cfg.ExperimentalMaxPendingEventsPerWatchStream, "experimental-max-pending-events-per-watch-stream", cfg.ExperimentalMaxPendingEventsPerWatchStream, "Maximum buffered events per watch stream before backpressure is applied. 0 disables the limit.")
+	fs.Int64Var(&cfg.ExperimentalWatchMemorySoftLimitBytes, "experimental-watch-memory-soft-limit-bytes", cfg.ExperimentalWatchMemorySoftLimitBytes, "Estimated buffered watch event size at which graceful degradation begins. 0 disables degradation.")
+	fs.Var(flags.NewStringsValue(""), "experimental-watch-critical-key-prefixes", "Comma-separated list of key prefixes whose watches are never paused or cancelled under memory pressure.")
+	fs.Var(flags.NewStringsValue(""), "experimental-watch-low-priority-key-prefixes", "Comma-separated list of key prefixes whose watches are paused or cancelled first under memory pressure.")
+	fs.DurationVar(&cfg.ExperimentalWatchDegradeCheckInterval, "experimental-watch-degrade-check-interval", cfg.ExperimentalWatchDegradeCheckInterval, "Period between watch memory-pressure evaluations. 0 uses the built-in default.")
+
 	fs.DurationVar(&cfg.DowngradeCheckTime, "downgrade-check-time", cfg.DowngradeCheckTime, "Duration of time between two downgrade status checks.")
 	fs.DurationVar(&cfg.WarningApplyDuration, "warning-apply-duration", cfg.WarningApplyDuration, "Time duration after which a warning is generated if watch progress takes more time.")
 	fs.DurationVar(&cfg.WarningUnaryRequestDuration, "warning-unary-request-duration", cfg.WarningUnaryRequestDuration, "Time duration after which a warning is generated if a unary request takes more time.")

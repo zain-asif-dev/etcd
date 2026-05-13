@@ -238,6 +238,9 @@ func (cfg *config) configFromCmdLine() error {
 
 	cfg.ec.CipherSuites = flags.StringsFromFlag(cfg.cf.flagSet, "cipher-suites")
 
+	cfg.ec.ExperimentalWatchCriticalKeyPrefixes = flags.StringsFromFlag(cfg.cf.flagSet, "experimental-watch-critical-key-prefixes")
+	cfg.ec.ExperimentalWatchLowPriorityKeyPrefixes = flags.StringsFromFlag(cfg.cf.flagSet, "experimental-watch-low-priority-key-prefixes")
+
 	cfg.ec.MaxConcurrentStreams = flags.Uint32FromFlag(cfg.cf.flagSet, "max-concurrent-streams")
 
 	cfg.ec.LogOutputs = flags.UniqueStringsFromFlag(cfg.cf.flagSet, "log-outputs")
